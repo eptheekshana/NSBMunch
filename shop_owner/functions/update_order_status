@@ -1,0 +1,108 @@
+<?php
+// Update order status functionality for shop owners
+require_once '../../config/database.php';
+require_once '../../config/config.php';
+require_once '../../config/session.php';
+
+header('Content-Type: application/json');
+
+// Require shop owner login
+if (!isShopOwner()) {
+    echo json_encode(['success' => false, 'message' => 'Authentication required']);
+    exit();
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode(['success' => false, 'message' => 'Invalid request method']);
+    exit();
+}
+
+$order_id = $_POST['order_id'] ?? '';
+$status = $_POST['status'] ?? '';
+$current_user = getCurrentUser();
+
+// Validate input
+if (empty($order_id) || empty($status)) {
+    echo json_encode(['success' => false, 'message' => 'Order ID and status are required']);
+    exit();
+}
+
+// Valid status options
+$valid_statuses = ['confirmed', 'rejected', 'ready', 'pickup'];
+
+if (!in_array($status, $valid_statuses)) {
+    echo json_encode(['success' => false, 'message' => 'Invalid status']);
+    exit();
+}
+
+try {
+    // Check if order exists and belongs to this shop
+    $order = fetchOne("SELECT * FROM orders WHERE order_id = ? AND shop_id = ?", [$order_id, $current_user['shop_id']]);
+    
+    if (!$order) {
+        echo json_encode(['success' => false, 'message' => 'Order not found']);
+        exit();
+    }
+    
+    // Check if user has confirmed the order (except for rejection)
+    if ($status !== 'rejected' && $order['user_status'] !== 'confirmed') {
+        echo json_encode(['success' => false, 'message' => 'User must confirm order first']);
+        exit();
+    }
+    
+    // Check if user has cancelled the order
+    if ($order['user_status'] === 'cancelled') {
+        echo json_encode(['success' => false, 'message' => 'Cannot update cancelled order']);
+        exit();
+    }
+    
+    // Validate status transition
+    $current_status = $order['shop_status'];
+    $valid_transition = false;
+    
+    switch ($current_status) {
+        case 'pending':
+            $valid_transition = in_array($status, ['confirmed', 'rejected']);
+            break;
+        case 'confirmed':
+            $valid_transition = in_array($status, ['ready', 'rejected']);
+            break;
+        case 'ready':
+            $valid_transition = ($status === 'pickup');
+            break;
+        default:
+            $valid_transition = false;
+    }
+    
+    if (!$valid_transition) {
+        echo json_encode(['success' => false, 'message' => 'Invalid status transition']);
+        exit();
+    }
+    
+    // Update order status
+    $sql = "UPDATE orders SET shop_status = ? WHERE order_id = ? AND shop_id = ?";
+    $params = [$status, $order_id, $current_user['shop_id']];
+    
+    if (executeQuery($sql, $params)) {
+        // Get status message
+        $status_messages = [
+            'confirmed' => 'Order confirmed successfully',
+            'rejected' => 'Order rejected',
+            'ready' => 'Order marked as ready for pickup',
+            'pickup' => 'Order marked as picked up'
+        ];
+        
+        echo json_encode([
+            'success' => true,
+            'message' => $status_messages[$status],
+            'new_status' => $status
+        ]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Failed to update order status']);
+    }
+    
+} catch (Exception $e) {
+    error_log("Order status update error: " . $e->getMessage());
+    echo json_encode(['success' => false, 'message' => 'An error occurred while updating order status']);
+}
+?>
