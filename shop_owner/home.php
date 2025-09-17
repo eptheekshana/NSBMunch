@@ -1,5 +1,5 @@
 <?php
-// Shop owner dashboard - FIXED VERSION
+// Shop owner dashboard 
 require_once '../config/database.php';
 require_once '../config/config.php';
 require_once '../config/session.php';
